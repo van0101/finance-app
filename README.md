@@ -1,13 +1,13 @@
 # Finance
 
-Transaction and finance tracker. Add bank or card statements (PDF) and payment screenshots, and the AI you
-connect (Claude, ChatGPT or Gemini) lists every transaction. You label each one; the app remembers your labels
-for next time.
+Transaction and finance tracker. Turn bank or card statements and payment screenshots into a spreadsheet with
+any AI chat you already use (Claude, ChatGPT, Gemini), import it, and label each transaction. The app remembers
+your labels for next time.
 
 - **Android app:** `finance.apk` on the [latest release](https://github.com/van0101/finance-app/releases/latest). Best installed with Obtainium so updates arrive by themselves.
 - **Web app (PWA):** https://van0101.github.io/finance-app/
 
-Everything stays on your device: there's no server. Files go only to the AI provider you connected, with your own API key.
+Everything stays on your device. The app makes no network calls and has no server.
 
 ## Install with Obtainium (Android)
 1. Open Obtainium > **Add app**.
@@ -15,23 +15,21 @@ Everything stays on your device: there's no server. Files go only to the AI prov
 3. Tap **Install**. Allow Obtainium to install unknown apps if Android asks.
 4. New releases show up in Obtainium's update list.
 
-## Connect an AI
-Settings > Connect AI, then follow the three steps. You need an **API key**, which is separate from a
-chat subscription:
-
-| AI | Get a key | Billing |
-|---|---|---|
-| Claude | https://console.anthropic.com/settings/keys | Prepaid credit in the Anthropic Console (Claude Pro/Max doesn't include API use) |
-| ChatGPT | https://platform.openai.com/api-keys | Prepaid credit on platform.openai.com (ChatGPT Plus doesn't include API use) |
-| Gemini | https://aistudio.google.com/apikey | Free tier available; on the free tier Google may use your inputs to improve its products |
-
 ## Using it
-1. **Import**: add PDFs or screenshots, tap **Read transactions**.
-2. **Review**: check the rows, change any label, untick anything you don't want. Possible duplicates are unticked for you.
-3. **Add to ledger**. From then on, tap a label to change it; it saves immediately.
+1. **Import > Copy the prompt** (tap the prompt box).
+2. Open your AI chat app, paste the prompt and attach your statement PDFs or screenshots. It replies with
+   `transactions.xlsx` (or a CSV table if it can't make files).
+3. Back in Finance, **Import > Add the Excel or CSV file** and pick the downloaded file, or open
+   **Or paste the table from the chat** and paste the table.
+4. **Review**: change any label, untick anything you don't want. Rows already in your ledger are unticked for you.
+5. **Add to ledger**. From then on, tap a label to change it; it saves immediately.
 
-Password-protected PDFs (most Indian bank e-statements) can't be read yet: open the PDF, Print > Save as PDF
-to get an unlocked copy, or use screenshots.
+The prompt includes your labels and the merchant labels you've picked, so the AI's suggestions improve as you use the app.
+
+Your own spreadsheets and bank exports also import, as long as they have a Date column and an Amount (or
+Withdrawal/Deposit) column. Header names are matched automatically.
+
+Expected columns: `Date | Name | Merchant | Description | Amount | Credit/Debit | Type | Label`
 
 ## Publish the web app with GitHub Pages
 Repo > Settings > Pages > Source: "Deploy from a branch" > Branch: `main`, folder `/ (root)` > Save.

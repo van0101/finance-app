@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Finance</title>
-<meta name="description" content="Transaction tracker: an AI of your choice reads your statements and screenshots, you label each transaction.">
+<meta name="description" content="Transaction tracker: turn statements into a spreadsheet with any AI chat, import it, and label each transaction.">
 <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
@@ -21,7 +21,6 @@
 <body>
 <header class="top">
   <div class="brand"><span class="mark" aria-hidden="true"></span>Finance</div>
-  <button class="ai-chip" id="aiChip" type="button" aria-label="AI connection">Connect AI</button>
 </header>
 
 <main id="main">
@@ -41,31 +40,39 @@
     <div id="ledgerRows" class="rows"></div>
     <div class="empty" id="ledgerEmpty" hidden>
       <p class="empty-title">No transactions yet</p>
-      <p>Add a statement PDF or a screenshot and your AI will list the transactions for you to label.</p>
-      <a class="btn primary" href="#import">Import a statement</a>
+      <p>Copy the prompt, give it to any AI chat with your statements or screenshots, then import the Excel file it makes.</p>
+      <a class="btn primary" href="#import">Import transactions</a>
     </div>
   </section>
 
   <!-- Import -->
   <section id="view-import" class="view" hidden>
-    <div class="notice" id="needAi" hidden>
-      <p>Connect an AI first. It reads your files and lists the transactions.</p>
-      <a class="btn primary" href="#setup">Connect AI</a>
-    </div>
-    <label class="drop" id="drop">
-      <input id="fileInput" type="file" accept="image/*,application/pdf" multiple>
-      <span class="drop-title">Add statements or screenshots</span>
-      <span class="drop-sub">PDF, PNG, JPG or WebP. Pick several at once, or paste a screenshot.</span>
-    </label>
-    <ul class="queue" id="queue"></ul>
-    <div class="actions" id="queueActions" hidden>
-      <button class="btn primary" id="runBtn" type="button">Read transactions</button>
-      <button class="btn ghost" id="clearQueue" type="button">Clear</button>
+    <div class="import-grid">
+      <aside class="card prompt-card">
+        <div class="step-h"><span class="num">1</span>Copy the prompt</div>
+        <p class="sub">Paste it into Claude, ChatGPT or Gemini together with your statement PDFs or payment screenshots. It asks for an Excel file in the format this app reads, and includes your labels.</p>
+        <button type="button" class="prompt" id="promptBox" aria-label="Copy prompt"><span class="prompt-text" id="promptText"></span><span class="prompt-copy" id="promptCopy">Tap to copy</span></button>
+      </aside>
+
+      <div class="import-main">
+        <div class="step-h"><span class="num">2</span>Import what the AI gave you</div>
+        <label class="drop" id="drop">
+          <input id="fileInput" type="file" accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" multiple>
+          <span class="drop-title">Add the Excel or CSV file</span>
+          <span class="drop-sub">.xlsx, .csv or .tsv. Your own spreadsheets and bank exports work too if they have Date and Amount columns.</span>
+        </label>
+        <details class="paste" id="pasteBox">
+          <summary>Or paste the table from the chat</summary>
+          <textarea id="pasteText" rows="6" placeholder="Paste CSV, a copied table, or the AI's code block" spellcheck="false" aria-label="Pasted table"></textarea>
+          <button class="btn small" id="pasteBtn" type="button">Read pasted table</button>
+        </details>
+        <ul class="queue" id="queue"></ul>
+      </div>
     </div>
 
     <div id="review" hidden>
       <h2 class="h">Review</h2>
-      <p class="sub">Nothing is saved until you tap <b>Add to ledger</b>. Labels are the AI's guess: tap one to change it.</p>
+      <p class="sub">Nothing is saved until you tap <b>Add to ledger</b>. Labels are suggestions: tap one to change it.</p>
       <div id="docCards" class="doc-cards"></div>
       <div class="toolbar slim">
         <button class="btn small ghost" id="selAll" type="button">Select all</button>
@@ -85,11 +92,8 @@
 
   <!-- Settings -->
   <section id="view-settings" class="view" hidden>
-    <h2 class="h">AI connection</h2>
-    <div class="card" id="aiCard"></div>
-
     <h2 class="h">Labels</h2>
-    <p class="sub">Shown in the label dropdown. Renaming a label renames it on every transaction that uses it.</p>
+    <p class="sub">Shown in the label dropdown. They're also listed in the prompt, so the AI suggests them. Renaming a label renames it on every transaction that uses it.</p>
     <div class="card">
       <form class="inline" id="addLabelForm">
         <input id="newLabel" type="text" placeholder="New label, e.g. Uber cab" maxlength="40" autocomplete="off" aria-label="New label">
@@ -112,53 +116,6 @@
     </div>
   </section>
 
-  <!-- Setup wizard -->
-  <section id="view-setup" class="view" hidden>
-    <ol class="steps" id="steps">
-      <li data-step="1">Pick AI</li><li data-step="2">Get key</li><li data-step="3">Connect</li>
-    </ol>
-
-    <div class="wiz" data-wiz="1">
-      <h2 class="h">Which AI should read your statements?</h2>
-      <p class="sub">You can connect one at a time and switch later.</p>
-      <div class="providers" id="providerCards"></div>
-      <div class="actions"><button class="btn primary" id="wiz1Next" type="button" disabled>Next</button></div>
-    </div>
-
-    <div class="wiz" data-wiz="2" hidden>
-      <h2 class="h" id="wiz2Title">Get an API key</h2>
-      <ol class="howto" id="howto"></ol>
-      <div class="notice warn" id="providerNote"></div>
-      <div class="actions">
-        <button class="btn ghost" data-back="1" type="button">Back</button>
-        <button class="btn primary" id="wiz2Next" type="button">I have a key</button>
-      </div>
-    </div>
-
-    <div class="wiz" data-wiz="3" hidden>
-      <h2 class="h" id="wiz3Title">Paste your key</h2>
-      <div class="field">
-        <label for="apiKey">API key</label>
-        <div class="key-row">
-          <input id="apiKey" type="password" autocomplete="off" spellcheck="false" autocapitalize="off">
-          <button class="btn small ghost" id="toggleKey" type="button">Show</button>
-        </div>
-        <p class="hint" id="keyHint"></p>
-      </div>
-      <button class="btn" id="testBtn" type="button">Test connection</button>
-      <p class="status" id="testStatus" role="status"></p>
-      <div class="field" id="modelField" hidden>
-        <label for="modelSelect">Model</label>
-        <select id="modelSelect"></select>
-        <p class="hint">Preselected: a good balance of accuracy and cost for reading statements.</p>
-      </div>
-      <p class="hint">Your key is saved only on this device and is sent only to the provider you picked.</p>
-      <div class="actions">
-        <button class="btn ghost" data-back="2" type="button">Back</button>
-        <button class="btn primary" id="saveAi" type="button" disabled>Save and continue</button>
-      </div>
-    </div>
-  </section>
 </main>
 
 <nav class="tabs" aria-label="Sections">
@@ -167,7 +124,7 @@
   <a href="#settings" data-tab="settings">Settings</a>
 </nav>
 
-<footer class="foot"><a href="https://github.com/van0101/finance-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener" id="ver">v0.1.0</a></footer>
+<footer class="foot"><a href="https://github.com/van0101/finance-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener" id="ver">v0.2.0</a></footer>
 
 <!-- Label picker, reused by every label cell -->
 <div class="picker" id="picker" hidden role="dialog" aria-label="Choose label">

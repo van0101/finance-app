@@ -1,7 +1,7 @@
 # Finance: repo rules
 
 Two apps, one version, one codebase:
-- Web PWA (index.html, styles.css, app.js, db.js, llm.js, sw.js, manifest.webmanifest, icons/) served by
+- Web PWA (index.html, styles.css, app.js, db.js, import.js, sw.js, manifest.webmanifest, icons/) served by
   GitHub Pages from `main` at https://van0101.github.io/finance-app/.
 - Android app in `android/` (Java, no AndroidX, Gradle 8.14.3, AGP in android/build.gradle): a WebView that
   bundles the web files at build time (`copyWeb` task in android/app/build.gradle) and serves them from
@@ -9,17 +9,20 @@ Two apps, one version, one codebase:
   Its versionName/versionCode are read from `APP_VERSION` in app.js; don't set them by hand.
 
 ## How it works
-- No backend. The user's API key and all transactions live on the device (IndexedDB via db.js).
-- llm.js calls Anthropic, OpenAI or Gemini directly from the browser with the user's key, using each
-  provider's structured output (Anthropic forced tool call, OpenAI json_schema strict, Gemini responseSchema).
-  All three return the same JSON shape (SCHEMA in llm.js).
-- The AI only suggests. Rows go to a review screen and are saved only when the user taps "Add to ledger".
+- No backend and no network calls. All transactions live on the device (IndexedDB via db.js).
+- The app does not call any AI. The Import screen shows a prompt (buildPrompt in import.js) that the user
+  copies into their own AI chat with statements/screenshots; the chat returns an .xlsx (or CSV/table text)
+  with the columns in COLUMNS. If you change the columns, change buildPrompt and HEADERS together.
+- import.js reads .xlsx itself (zip via DecompressionStream + DOMParser, no library), CSV/TSV and pasted
+  markdown tables, finds the header row, and maps columns by name (HEADERS). Dates are day-first.
+- Imported labels are only suggestions. Rows go to a review screen and are saved only when the user taps "Add to ledger".
   Never change saved records without a user action. Bulk relabels are offered as a button, never applied silently.
 - Merchant -> label memory is written only from the user's own label choices, and only affects new imports.
 
 ## Every change that ships to users
 1. Bump the version using semver: MAJOR for breaking changes (removed feature, reset data),
-   MINOR for new features, PATCH for fixes, security and wording.
+   MINOR for new features, PATCH for fixes, security and wording. While the app is 0.x (proof of
+   concept), breaking changes bump MINOR instead.
 2. Set it in all four places: `APP_VERSION` in app.js, `VERSION` in sw.js (`finance-vX.Y.Z`),
    the `#ver` footer text in index.html, and a new top entry in CHANGELOG.md
    (Keep a Changelog format, with the compare link at the bottom).
@@ -36,9 +39,9 @@ Two apps, one version, one codebase:
 
 ## Conventions
 - App name is "Finance".
-- Keep the Content Security Policy: no inline scripts, styles or event handlers. connect-src lists only the
-  three AI provider hosts; adding a provider means updating the CSP meta tag in index.html.
-- No innerHTML with user or AI text: build DOM with the `h()` helper in app.js.
+- Keep the Content Security Policy: no inline scripts, styles or event handlers, and no outside hosts
+  (connect-src 'self'). Don't add CDNs; vendor anything needed into the repo.
+- No innerHTML with user or file text: build DOM with the `h()` helper in app.js.
 - Never commit personal financial data (statements, exports, the spreadsheet). The repo is public.
 - New files the web app needs offline must be added to `SHELL` in sw.js, and to the include list of
   `copyWeb` in android/app/build.gradle if they're not *.js, *.css or under icons/.

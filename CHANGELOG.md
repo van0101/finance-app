@@ -11,6 +11,22 @@ and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
+### Removed
+- Connecting an AI with an API key, and the setup screens for it. The app no longer talks to any AI provider or any other server. An API key saved by 0.1.0 is deleted from the device on first launch.
+
+### Added
+- Import screen step 1: a prompt to copy with one tap. Paste it into Claude, ChatGPT or Gemini with your statements or screenshots and it returns an Excel file in the format the app reads. The prompt includes your labels and the merchant labels you've chosen, so suggestions match your list.
+- Import step 2: add the .xlsx or .csv file, or paste the table from the chat (CSV, a copied table or the code block). Excel files are read on the device with no extra library.
+- Column detection: finds the header row and maps common names (Date, Name/Narration/Particulars, Amount, Withdrawal/Deposit, Credit/Debit, Type, Category/Label). The FY spreadsheet's "All Transactions" sheet and typical bank CSV exports import as-is. Excel dates, DD/MM/YYYY and "03 Nov 2026" dates are understood.
+- Review cards show which column fed which field, and how many lines were skipped.
+
+### Changed
+- Network access in the web app is limited to its own files (CSP `connect-src 'self'`).
+- Android file picker shows all files, since phones label .xlsx and .csv inconsistently.
+
+
 ## [0.1.0] - 2026-11-03
 
 ### Added
@@ -26,5 +42,6 @@ and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
 - Android app: the same web app bundled in a WebView, with the system file picker and "Save as" for exports. Released as `finance.apk` for Obtainium.
 - CI: version check, release with signed APK, Android build, CodeQL, ZAP baseline, Dependabot.
 
-[Unreleased]: https://github.com/van0101/finance-app/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/van0101/finance-app/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/van0101/finance-app/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/van0101/finance-app/releases/tag/v0.1.0

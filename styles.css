@@ -68,14 +68,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
 .mark { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--accent) 0 50%, var(--credit) 50%); }
-.ai-chip {
-  border: 1px solid var(--line); background: var(--panel); border-radius: 999px;
-  padding: 5px 12px; font-size: 13px; cursor: pointer; max-width: 60vw;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ai-chip.on::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--credit); margin-right: 6px; vertical-align: 1px; }
-
-main { max-width: 960px; margin: 0 auto; padding: 16px; }
+main { max-width: 1040px; margin: 0 auto; padding: 16px; }
 .h { font-size: 17px; margin: 22px 0 6px; letter-spacing: -.01em; }
 .view > .h:first-child, .wiz > .h:first-child { margin-top: 4px; }
 .sub { color: var(--mute); margin: 0 0 12px; font-size: 14px; }
@@ -260,24 +253,6 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); m
 .empty { text-align: center; padding: 40px 16px; color: var(--mute); }
 .empty-title { font-weight: 700; color: var(--ink); font-size: 17px; margin-bottom: 4px; }
 
-/* Wizard */
-.steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 16px; counter-reset: s; }
-.steps li { flex: 1; font-size: 12px; color: var(--mute); border-top: 3px solid var(--line); padding-top: 6px; counter-increment: s; }
-.steps li::before { content: counter(s) ". "; }
-.steps li.on, .steps li.done { color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
-.providers { display: grid; gap: 8px; }
-.prov {
-  display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: center; text-align: left;
-  background: var(--panel); border: 2px solid var(--line); border-radius: var(--radius); padding: 12px 14px; cursor: pointer;
-}
-.prov.on { border-color: var(--accent); background: var(--accent-soft); }
-.prov .pn { font-weight: 700; font-size: 16px; }
-.prov .pv { grid-column: 2; color: var(--mute); font-size: 13px; }
-.prov .dot { grid-row: 1 / span 2; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); }
-.prov.on .dot { border: 6px solid var(--accent); }
-.howto { padding-left: 20px; margin: 0 0 12px; }
-.howto li { margin-bottom: 8px; }
-
 /* Bottom tabs */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
@@ -325,3 +300,35 @@ dialog .actions { justify-content: flex-end; }
 .toast button { border: 0; background: none; color: var(--accent); font-weight: 700; cursor: pointer; white-space: nowrap; padding: 4px; }
 @media (prefers-color-scheme: dark) { .toast button { color: #1f6f5c; } }
 .group > summary .g-amt.credit { color: var(--credit); }
+
+/* Import: prompt beside the import area on wide screens, above it on phones */
+.import-grid { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 900px) {
+  .import-grid { grid-template-columns: minmax(0, 1fr) 380px; }
+  .prompt-card { grid-column: 2; grid-row: 1; position: sticky; top: 72px; }
+  .import-main { grid-column: 1; grid-row: 1; }
+}
+.step-h { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; margin: 0 0 8px; }
+.step-h .num { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 13px; }
+.prompt-card .sub { margin-bottom: 10px; }
+.prompt {
+  display: block; width: 100%; text-align: left; cursor: copy; position: relative;
+  background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px;
+  padding: 12px 12px 36px; max-height: 260px; overflow: hidden;
+}
+.prompt-text { display: block; white-space: pre-wrap; font: 12px/1.5 var(--mono); color: var(--mute); }
+.prompt::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: linear-gradient(transparent, var(--panel-2) 70%); border-radius: 0 0 10px 10px; }
+.prompt-copy {
+  position: absolute; z-index: 1; left: 50%; bottom: 10px; transform: translateX(-50%);
+  background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 14px;
+  border-radius: 999px; padding: 6px 16px; white-space: nowrap;
+}
+.prompt.copied { border-color: var(--accent); border-style: solid; }
+.paste { margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; }
+.paste summary { cursor: pointer; padding: 10px 0; font-weight: 600; font-size: 14px; }
+.paste textarea {
+  display: block; width: 100%; min-height: 120px; resize: vertical; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 8px; font: 12px/1.5 var(--mono);
+}
+.paste .btn { margin-bottom: 12px; }
+.doc .map { font: 11px/1.5 var(--mono); color: var(--mute); margin-top: 4px; }

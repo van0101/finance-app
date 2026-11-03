@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Talks to the AI provider the user connected (Anthropic, OpenAI or Google) -->
+    <!-- WebView needs this to load the app's https://appassets.androidplatform.net page. The page's
+         Content Security Policy blocks every outside host, so no data leaves the phone. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- allowBackup off: transactions and the API key stay on this phone only -->
+    <!-- allowBackup off: transactions stay on this phone only (export a backup from Settings). -->
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"

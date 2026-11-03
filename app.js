@@ -1,8 +1,8 @@
 // Finance: web app. Keep APP_VERSION in sync with sw.js, index.html (#ver) and CHANGELOG.md (CI checks it).
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 
 import { db } from "./db.js";
-import { PROVIDERS, TXN_TYPES, listModels, extractTransactions } from "./llm.js";
+import { TXN_TYPES, buildPrompt, parseFile, parseText } from "./import.js";
 
 // ---------- Defaults ----------
 
@@ -17,17 +17,15 @@ const DEFAULT_LABELS = [
 // ---------- State ----------
 
 const state = {
-  ai: null,          // { provider, key, model }
   labels: [],        // string[]
   memory: {},        // merchant -> label (set only by the user's own choices)
   txns: [],          // ledger
   pending: [],       // extracted rows waiting for review
   docs: [],          // per-file summaries for the review screen
-  queue: [],         // files waiting to be read: { id, file, status, msg }
+  queue: [],         // imported files and their result: { id, name, status, msg }
   ledgerMode: "list",
   reviewMode: "list",
-  filter: { q: "", month: "", label: "" },
-  wizard: { provider: null, models: null }
+  filter: { q: "", month: "", label: "" }
 };
 
 // ---------- Tiny DOM helper (no innerHTML with user data) ----------
@@ -83,7 +81,7 @@ async function load() {
   const [ai, labels, memory, pending, docs, txns] = await Promise.all([
     db.get("ai"), db.get("labels"), db.get("memory"), db.get("pending"), db.get("docs"), db.allTxns()
   ]);
-  state.ai = ai || null;
+  if (ai) await db.set("ai", null); // 0.1.0 stored an AI API key; the app no longer uses one
   state.labels = Array.isArray(labels) ? labels : DEFAULT_LABELS.slice();
   if (!labels) await db.set("labels", state.labels);
   state.memory = memory || {};
@@ -91,8 +89,8 @@ async function load() {
   state.docs = docs || [];
   state.txns = txns || [];
 }
-const saveLabels = () => db.set("labels", state.labels);
-const saveMemory = () => db.set("memory", state.memory);
+const saveLabels = () => { renderPrompt(); return db.set("labels", state.labels); };
+const saveMemory = () => { renderPrompt(); return db.set("memory", state.memory); };
 const savePending = () => Promise.all([db.set("pending", state.pending), db.set("docs", state.docs)]);
 
 function ensureLabel(label) {
@@ -221,7 +219,7 @@ function chip(t, onChange) {
     type: "button",
     class: `chip ${label ? "" : "empty"} ${t.labelSource === "ai" ? "ai" : t.labelSource === "learned" ? "learned" : ""}`,
     style: { "--h": hue(label) },
-    title: t.labelSource === "ai" ? "AI suggestion. Tap to change." : t.labelSource === "learned" ? "From your earlier choice for this merchant. Tap to change." : "Tap to change",
+    title: t.labelSource === "ai" ? "Suggested in the imported file. Tap to change." : t.labelSource === "learned" ? "From your earlier choice for this merchant. Tap to change." : "Tap to change",
     onclick: (e) => openPicker(e.currentTarget, label, onChange)
   }, h("span", null, label || "Add label"));
 }
@@ -233,7 +231,7 @@ function rowEl(t, opts) {
   const flags = [];
   if (t.dup) flags.push(h("span", { class: "flag", title: "Same date, amount and merchant already in your ledger" }, "Possible duplicate"));
   if (t.invalid) flags.push(h("span", { class: "flag", title: t.invalid }, "Check"));
-  if (t.newLabel) flags.push(h("span", { class: "flag", title: "The AI suggested a label you don't have yet. It's added to your list when you save." }, "New label"));
+  if (t.newLabel) flags.push(h("span", { class: "flag", title: "A label you don't have yet. It's added to your list when you save." }, "New label"));
   return h("div", { class: `row ${opts.selectable && !t.include ? "excluded" : ""}`, "data-id": t.id },
     opts.selectable ? h("span", { class: "sel" }, h("input", {
       type: "checkbox", "aria-label": "Include", checked: !!t.include,
@@ -431,151 +429,120 @@ async function deleteTxn(t) {
 
 // ---------- Import ----------
 
-const ACCEPT_IMG = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const MAX_FILE_MB = 30;
+function renderPrompt() {
+  const el = $("promptText");
+  if (el) el.textContent = buildPrompt(state.labels, state.memory);
+}
 
-function addFiles(files) {
-  for (const file of files) {
-    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-    const isImg = file.type.startsWith("image/");
-    const item = { id: uid(), file, status: "queued", msg: "" };
-    if (!isPdf && !isImg) { item.status = "error"; item.msg = "Not a PDF or image. Skipped."; }
-    else if (file.size > MAX_FILE_MB * 1024 * 1024) { item.status = "error"; item.msg = `Larger than ${MAX_FILE_MB} MB. Split it first.`; }
-    state.queue.push(item);
+async function copyPrompt() {
+  const text = buildPrompt(state.labels, state.memory);
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch { /* fall back below */ }
+  if (!ok) {
+    const ta = h("textarea", { readonly: true, "aria-hidden": "true" }, text);
+    ta.style.setProperty("position", "fixed"); ta.style.setProperty("opacity", "0");
+    document.body.append(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    ta.remove();
   }
+  const box = $("promptBox");
+  if (ok) {
+    box.classList.add("copied"); $("promptCopy").textContent = "Copied ✓";
+    setTimeout(() => { box.classList.remove("copied"); $("promptCopy").textContent = "Tap to copy"; }, 2500);
+    toast("Prompt copied. Paste it into your AI chat with your statements.");
+  } else toast("Couldn't copy. Long-press the prompt text to copy it.");
+}
+
+async function importFiles(files) {
+  for (const file of files) {
+    const item = { id: uid(), name: file.name || "file", status: "working", msg: "Reading…" };
+    state.queue.push(item); renderQueue();
+    try {
+      addResult(item.name, await parseFile(file));
+      item.status = "done";
+    } catch (e) { item.status = "error"; item.msg = e.message || String(e); }
+    if (item.status === "done") item.msg = state.docs.at(-1).summary;
+    renderQueue();
+  }
+  await savePending();
+  renderReview();
+}
+
+async function importPasted() {
+  const text = $("pasteText").value;
+  if (!text.trim()) { toast("Paste the table first"); return; }
+  const item = { id: uid(), name: "Pasted table", status: "working", msg: "" };
+  state.queue.push(item);
+  try {
+    addResult(item.name, parseText(text));
+    item.status = "done"; item.msg = state.docs.at(-1).summary;
+    $("pasteText").value = "";
+    $("pasteBox").open = false;
+  } catch (e) { item.status = "error"; item.msg = e.message || String(e); }
   renderQueue();
+  await savePending();
+  renderReview();
+}
+
+function addResult(source, res) {
+  const rows = res.rows.map((r) => toPendingRow(r, source));
+  markDuplicates(rows);
+  state.pending.push(...rows);
+  const dups = rows.filter((r) => r.dup).length;
+  const bad = rows.filter((r) => r.invalid).length;
+  state.docs.push({
+    file: source,
+    sheet: res.sheet,
+    count: rows.length,
+    out: rows.filter((r) => r.direction !== "credit").reduce((s, r) => s + (r.amount || 0), 0),
+    in: rows.filter((r) => r.direction === "credit").reduce((s, r) => s + (r.amount || 0), 0),
+    mapping: res.mapping,
+    warnings: [
+      ...res.warnings,
+      res.skipped ? `${res.skipped} line${res.skipped > 1 ? "s" : ""} skipped (totals, balances or unreadable).` : "",
+      dups ? `${dups} already in your ledger: left unticked.` : "",
+      bad ? `${bad} with a missing date or amount: left unticked.` : ""
+    ].filter(Boolean),
+    summary: `${rows.length} transaction${rows.length === 1 ? "" : "s"} found${dups ? ` · ${dups} possible duplicate${dups > 1 ? "s" : ""}` : ""}`
+  });
 }
 
 function renderQueue() {
-  const ul = $("queue");
-  ul.replaceChildren(...state.queue.map((q) => {
-    const isPdf = /pdf/i.test(q.file.type) || /\.pdf$/i.test(q.file.name);
-    const st = q.status === "working" ? [h("span", { class: "spin" }), q.msg || "Reading…"]
-      : q.status === "done" ? q.msg : q.status === "error" ? q.msg : `${(q.file.size / 1024 / 1024).toFixed(1)} MB · waiting`;
-    return h("li", null,
-      h("span", { class: "kind" }, isPdf ? "PDF" : "IMG"),
-      h("span", { class: "grow" },
-        h("div", { class: "fname", title: q.file.name }, q.file.name || "pasted image"),
-        h("div", { class: `fstat ${q.status === "error" ? "err" : q.status === "done" ? "ok" : ""}` }, st)),
-      q.status === "working" ? h("span") : h("button", {
-        type: "button", class: "icon-btn", "aria-label": "Remove", title: "Remove",
-        onclick: () => { state.queue = state.queue.filter((x) => x !== q); renderQueue(); }
-      }, "×"));
-  }));
-  const waiting = state.queue.some((q) => q.status === "queued");
-  const busy = state.queue.some((q) => q.status === "working");
-  $("queueActions").hidden = state.queue.length === 0;
-  $("runBtn").disabled = !waiting || busy || !state.ai;
-  $("runBtn").textContent = busy ? "Reading…" : "Read transactions";
-  $("clearQueue").disabled = busy;
+  $("queue").replaceChildren(...state.queue.map((q) => h("li", null,
+    h("span", { class: "kind" }, /\.csv$|\.tsv$|pasted/i.test(q.name) ? "CSV" : "XLSX"),
+    h("span", { class: "grow" },
+      h("div", { class: "fname", title: q.name }, q.name),
+      h("div", { class: `fstat ${q.status === "error" ? "err" : q.status === "done" ? "ok" : ""}` },
+        q.status === "working" ? [h("span", { class: "spin" }), q.msg] : q.msg)),
+    q.status === "working" ? h("span") : h("button", {
+      type: "button", class: "icon-btn", "aria-label": "Dismiss", title: "Dismiss",
+      onclick: () => { state.queue = state.queue.filter((x) => x !== q); renderQueue(); }
+    }, "×"))));
 }
 
-async function fileToPayload(file) {
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  if (isPdf) {
-    const buf = new Uint8Array(await file.arrayBuffer());
-    if (isEncryptedPdf(buf)) {
-      throw new Error("This PDF is password-protected. Open it, use Print > Save as PDF to save an unlocked copy, and add that instead. Or add screenshots of the pages.");
-    }
-    return { mime: "application/pdf", base64: bytesToBase64(buf), name: file.name };
-  }
-  // Images: send as-is when small and in a supported format, otherwise re-encode as JPEG.
-  if (ACCEPT_IMG.includes(file.type) && file.size <= 3.5 * 1024 * 1024) {
-    const bmp = await createImageBitmap(file).catch(() => null);
-    if (!bmp || Math.max(bmp.width, bmp.height) <= 7000) {
-      return { mime: file.type, base64: bytesToBase64(new Uint8Array(await file.arrayBuffer())), name: file.name };
-    }
-  }
-  const bmp = await createImageBitmap(file).catch(() => null);
-  if (!bmp) throw new Error("This image format can't be read here. Save it as JPG or PNG and try again.");
-  const scale = Math.min(1, 4000 / Math.max(bmp.width, bmp.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bmp.width * scale);
-  canvas.height = Math.round(bmp.height * scale);
-  canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.9));
-  return { mime: "image/jpeg", base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())), name: file.name };
-}
-
-function isEncryptedPdf(bytes) {
-  // The /Encrypt entry lives in the trailer, near the end. Check the tail and head to be safe.
-  const dec = new TextDecoder("latin1");
-  const tail = dec.decode(bytes.subarray(Math.max(0, bytes.length - 65536)));
-  const head = dec.decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
-  return /\/Encrypt\s/.test(tail) || /\/Encrypt\s/.test(head);
-}
-
-function bytesToBase64(bytes) {
-  let s = "";
-  const CH = 0x8000;
-  for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
-  return btoa(s);
-}
-
-async function runQueue() {
-  if (!state.ai) { location.hash = "#setup"; return; }
-  const todo = state.queue.filter((q) => q.status === "queued");
-  for (const q of todo) {
-    q.status = "working"; q.msg = "Preparing file…"; renderQueue();
-    try {
-      const payload = await fileToPayload(q.file);
-      q.msg = `Asking ${PROVIDERS[state.ai.provider].name}… (can take a minute for long statements)`; renderQueue();
-      const res = await extractTransactions({
-        provider: state.ai.provider, key: state.ai.key, model: state.ai.model,
-        labels: state.labels, memory: state.memory, file: payload
-      });
-      const rows = res.transactions.map((r) => toPendingRow(r, q.file.name, res.document));
-      markDuplicates(rows);
-      state.pending.push(...rows);
-      state.docs.push({
-        file: q.file.name || "pasted image",
-        kind: res.document.kind || "",
-        period: res.document.period || "",
-        isFinancial: res.document.is_financial !== false,
-        count: rows.length,
-        out: rows.filter((r) => r.direction !== "credit").reduce((s, r) => s + (r.amount || 0), 0),
-        in: rows.filter((r) => r.direction === "credit").reduce((s, r) => s + (r.amount || 0), 0),
-        currency: res.document.currency || "INR",
-        warnings: res.warnings
-      });
-      await savePending();
-      q.status = res.document.is_financial === false ? "error" : "done";
-      q.msg = res.document.is_financial === false ? "Doesn't look like a financial document. Nothing taken from it."
-        : `${rows.length} transaction${rows.length === 1 ? "" : "s"} found${res.warnings.length ? ` · ${res.warnings.length} note${res.warnings.length > 1 ? "s" : ""}` : ""}`;
-    } catch (e) {
-      q.status = "error";
-      q.msg = e.message || String(e);
-    }
-    renderQueue();
-    renderReview();
-  }
-}
-
-function toPendingRow(r, fileName, doc) {
+function toPendingRow(r, source) {
   const merchant = norm(r.merchant) || norm(r.name);
   const learned = state.memory[merchant];
-  const suggested = (r.suggested_label || "").trim().slice(0, 40);
-  const label = learned || (suggested ? canonicalLabel(suggested) : "");
-  const amount = Math.abs(Number(r.amount));
+  const label = learned || (r.label ? canonicalLabel(r.label) : "");
   const row = {
     id: uid(),
-    date: String(r.date || "").slice(0, 10),
-    name: String(r.name || "").slice(0, 120),
+    date: r.date,
+    name: r.name || "(no name)",
     merchant,
-    description: String(r.description || "").slice(0, 200),
-    amount: Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0,
-    direction: r.direction === "credit" ? "credit" : "debit",
+    description: r.description,
+    amount: r.amount,
+    direction: r.direction,
     type: TXN_TYPES.includes(r.type) ? r.type : "Expense",
-    currency: (doc.currency || "INR").toUpperCase().slice(0, 3),
+    currency: r.currency || "INR",
     label,
-    labelSource: learned ? "learned" : "ai",
-    aiLabel: suggested,
-    source: fileName || "pasted image",
+    labelSource: learned ? "learned" : label ? "ai" : "",
+    aiLabel: r.label,
+    source: r.line ? `${source} · row ${r.line}` : source,
     include: true
   };
   row.newLabel = !!label && !state.labels.some((l) => norm(l) === norm(label));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date) || Number.isNaN(Date.parse(row.date))) row.invalid = "Date couldn't be read";
-  else if (!(row.amount > 0)) row.invalid = "Amount couldn't be read";
+  if (!row.date) row.invalid = "Date missing or not readable";
+  else if (!(row.amount > 0)) row.invalid = "Amount missing or zero";
   if (row.invalid) row.include = false;
   return row;
 }
@@ -602,11 +569,11 @@ function renderReview() {
   $("pendingBadge").textContent = n;
   if (!has) return;
 
-  $("docCards").replaceChildren(...state.docs.map((d) => h("div", { class: `doc ${d.isFinancial ? "" : "bad"}` },
+  $("docCards").replaceChildren(...state.docs.map((d) => h("div", { class: `doc ${d.count ? "" : "bad"}` },
     h("div", { class: "t", title: d.file }, d.file),
-    h("div", { class: "m" }, [kindLabel(d.kind), d.period].filter(Boolean).join(" · ") || "Document"),
-    d.isFinancial ? h("div", null, `${d.count} transactions · out ${money(d.out, d.currency)} · in ${money(d.in, d.currency)}`)
-      : h("div", null, "Not a financial document. Nothing was taken from it."),
+    d.sheet && d.sheet !== "Pasted table" ? h("div", { class: "m" }, `Sheet: ${d.sheet}`) : null,
+    h("div", null, `${d.count} transactions · out ${money(d.out)} · in ${money(d.in)}`),
+    d.mapping?.length ? h("div", { class: "map" }, d.mapping.join(" · ")) : null,
     d.warnings?.length ? h("ul", null, ...d.warnings.map((w) => h("li", null, w))) : null)));
 
   const rows = state.pending.slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -629,14 +596,6 @@ function renderReview() {
   $("commitBtn").disabled = sel === 0;
 }
 
-function kindLabel(k) {
-  return {
-    bank_statement: "Bank statement", credit_card_statement: "Credit card statement",
-    upi_or_wallet_screenshot: "UPI / wallet screenshot", receipt: "Receipt", invoice: "Invoice",
-    other_financial: "Financial document", not_financial: "Not financial"
-  }[k] || "";
-}
-
 async function commitPending() {
   const chosen = state.pending.filter((t) => t.include);
   if (!chosen.length) return;
@@ -654,7 +613,7 @@ async function commitPending() {
   state.txns.push(...records);
   const skipped = state.pending.length - chosen.length;
   state.pending = []; state.docs = [];
-  state.queue = state.queue.filter((q) => q.status === "queued" || q.status === "working");
+  state.queue = [];
   await savePending();
   renderQueue(); renderReview(); renderFilters(); renderLedger(); renderSettings();
   location.hash = "#ledger";
@@ -662,9 +621,9 @@ async function commitPending() {
 }
 
 async function discardPending() {
-  if (!(await confirmBox(`Discard ${state.pending.length} extracted transactions? You'd need to read the files again.`, "Discard"))) return;
+  if (!(await confirmBox(`Discard ${state.pending.length} imported transactions? You'd need to import the file again.`, "Discard"))) return;
   state.pending = []; state.docs = [];
-  state.queue = state.queue.filter((q) => q.status === "queued" || q.status === "working");
+  state.queue = [];
   await savePending();
   renderQueue(); renderReview();
 }
@@ -672,34 +631,6 @@ async function discardPending() {
 // ---------- Settings ----------
 
 function renderSettings() {
-  // AI card
-  const card = $("aiCard");
-  if (state.ai) {
-    const p = PROVIDERS[state.ai.provider];
-    const modelSel = h("select", { "aria-label": "Model" }, h("option", { value: state.ai.model }, state.ai.model));
-    modelSel.addEventListener("focus", async () => {
-      if (modelSel.dataset.loaded) return;
-      modelSel.dataset.loaded = "1";
-      try {
-        const { list } = await listModels(state.ai.provider, state.ai.key);
-        modelSel.replaceChildren(...list.map((m) => h("option", { value: m.id }, m.label === m.id ? m.id : `${m.label} (${m.id})`)));
-        modelSel.value = state.ai.model;
-      } catch (e) { toast(e.message); }
-    }, { once: true });
-    modelSel.addEventListener("change", async () => {
-      state.ai.model = modelSel.value; await db.set("ai", state.ai); renderAiChip(); toast("Model saved");
-    });
-    card.replaceChildren(
-      h("p", null, h("b", null, `${p.name} (${p.vendor})`), ` · key ending ${state.ai.key.slice(-4)}`),
-      h("div", { class: "field" }, h("label", null, "Model"), modelSel),
-      h("div", { class: "btn-row" },
-        h("a", { class: "btn small", href: "#setup" }, "Switch AI"),
-        h("a", { class: "btn small ghost", href: p.billingUrl, target: "_blank", rel: "noopener" }, "Usage and billing"),
-        h("button", { type: "button", class: "btn small danger", onclick: disconnectAi }, "Disconnect")));
-  } else {
-    card.replaceChildren(h("p", null, "No AI connected."), h("a", { class: "btn primary small", href: "#setup" }, "Connect AI"));
-  }
-
   // Labels
   const counts = labelCounts();
   $("labelList").replaceChildren(...state.labels.slice().sort((a, b) => a.localeCompare(b)).map((l) => {
@@ -758,14 +689,6 @@ function deleteLabel(l) {
   toast(`Deleted “${l}”`, { label: "Undo", fn: () => { ensureLabel(l); renderSettings(); renderFilters(); } });
 }
 
-async function disconnectAi() {
-  if (!(await confirmBox("Disconnect the AI? The API key is removed from this device. Your transactions stay.", "Disconnect"))) return;
-  state.ai = null;
-  await db.set("ai", null);
-  renderAiChip(); renderSettings(); renderQueue();
-  toast("Disconnected");
-}
-
 // ---------- Export / backup ----------
 
 function csvCell(v) {
@@ -817,144 +740,31 @@ function download(name, mime, text) {
 }
 
 async function wipe() {
-  if (!(await confirmBox("Delete all transactions, labels, learned merchants and the AI key from this device? This can't be undone. Export a backup first if you might need it.", "Delete everything"))) return;
+  if (!(await confirmBox("Delete all transactions, labels and learned merchants from this device? This can't be undone. Export a backup first if you might need it.", "Delete everything"))) return;
   await db.clearTxns(); await db.clearKv();
   await load();
   renderAll();
   toast("All data deleted");
 }
 
-// ---------- Setup wizard ----------
-
-function renderAiChip() {
-  const c = $("aiChip");
-  if (state.ai) {
-    c.textContent = `${PROVIDERS[state.ai.provider].name} · ${state.ai.model}`;
-    c.classList.add("on");
-  } else {
-    c.textContent = "Connect AI";
-    c.classList.remove("on");
-  }
-}
-
-function wizStep(n) {
-  document.querySelectorAll(".wiz").forEach((w) => { w.hidden = w.dataset.wiz !== String(n); });
-  document.querySelectorAll("#steps li").forEach((li) => {
-    const s = +li.dataset.step;
-    li.classList.toggle("on", s === n);
-    li.classList.toggle("done", s < n);
-  });
-  if (n === 2) renderWiz2();
-  if (n === 3) renderWiz3();
-  scrollTo(0, 0);
-}
-
-function renderWiz1() {
-  const sel = state.wizard.provider;
-  $("providerCards").replaceChildren(...Object.entries(PROVIDERS).map(([id, p]) => h("button", {
-    type: "button", class: `prov ${sel === id ? "on" : ""}`, "aria-pressed": sel === id ? "true" : "false",
-    onclick: () => { state.wizard.provider = id; state.wizard.models = null; renderWiz1(); }
-  },
-  h("span", { class: "dot" }), h("span", { class: "pn" }, p.name), h("span", { class: "pv" }, `by ${p.vendor}${id === "gemini" ? " · has a free tier" : ""}`))));
-  $("wiz1Next").disabled = !sel;
-}
-
-function renderWiz2() {
-  const p = PROVIDERS[state.wizard.provider];
-  $("wiz2Title").textContent = `Get a ${p.name} API key`;
-  const link = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text);
-  const steps = {
-    anthropic: [
-      ["Open ", link(p.keyUrl, "console.anthropic.com → API keys"), " and sign in (same email as claude.ai is fine)."],
-      ["Add credit under ", link(p.billingUrl, "Billing"), ". A few dollars covers many statements."],
-      ["Click ", h("b", null, "Create Key"), ", name it “Finance app”, and copy it. It's shown only once."]
-    ],
-    openai: [
-      ["Open ", link(p.keyUrl, "platform.openai.com → API keys"), " and sign in."],
-      ["Add credit under ", link(p.billingUrl, "Billing"), "."],
-      ["Click ", h("b", null, "Create new secret key"), ", name it “Finance app”, and copy it. It's shown only once."]
-    ],
-    gemini: [
-      ["Open ", link(p.keyUrl, "aistudio.google.com → Get API key"), " and sign in with your Google account."],
-      ["Click ", h("b", null, "Create API key"), " and copy it."],
-      ["Optional: turn on billing for the key's Google Cloud project (see the note below)."]
-    ]
-  }[state.wizard.provider];
-  $("howto").replaceChildren(...steps.map((s) => h("li", null, ...s)));
-  $("providerNote").textContent = p.note;
-}
-
-function renderWiz3() {
-  const p = PROVIDERS[state.wizard.provider];
-  $("wiz3Title").textContent = `Connect ${p.name}`;
-  $("keyHint").textContent = `Paste the key here. A ${p.vendor} key ${p.keyHint}.`;
-  const same = state.ai && state.ai.provider === state.wizard.provider;
-  if (same && !$("apiKey").value) $("apiKey").value = state.ai.key;
-  $("testStatus").textContent = ""; $("testStatus").className = "status";
-  $("modelField").hidden = !state.wizard.models;
-  $("saveAi").disabled = !state.wizard.models;
-}
-
-async function testKey() {
-  const key = $("apiKey").value.trim();
-  const p = PROVIDERS[state.wizard.provider];
-  const st = $("testStatus");
-  if (!key) { st.textContent = "Paste a key first."; st.className = "status err"; return; }
-  if (!p.keyPattern.test(key)) {
-    st.textContent = `That doesn't look like a ${p.vendor} key (it ${p.keyHint}). Trying anyway…`; st.className = "status";
-  } else { st.textContent = "Checking…"; st.className = "status"; }
-  $("testBtn").disabled = true;
-  try {
-    const { list, recommended } = await listModels(state.wizard.provider, key);
-    state.wizard.models = list;
-    const sel = $("modelSelect");
-    sel.replaceChildren(...list.map((m) => h("option", { value: m.id }, m.label === m.id ? m.id : `${m.label} (${m.id})`)));
-    sel.value = state.ai?.provider === state.wizard.provider && list.some((m) => m.id === state.ai.model) ? state.ai.model : recommended;
-    st.textContent = `Connected. ${list.length} models available.`; st.className = "status ok";
-    $("modelField").hidden = false;
-    $("saveAi").disabled = false;
-  } catch (e) {
-    state.wizard.models = null;
-    st.textContent = e.message; st.className = "status err";
-    $("modelField").hidden = true;
-    $("saveAi").disabled = true;
-  } finally { $("testBtn").disabled = false; }
-}
-
-async function saveAi() {
-  state.ai = { provider: state.wizard.provider, key: $("apiKey").value.trim(), model: $("modelSelect").value };
-  await db.set("ai", state.ai);
-  $("apiKey").value = "";
-  renderAiChip(); renderSettings(); renderQueue();
-  toast(`${PROVIDERS[state.ai.provider].name} connected`);
-  location.hash = "#import";
-}
-
 // ---------- Routing ----------
 
 function route() {
   let v = (location.hash || "").slice(1);
-  if (!["ledger", "import", "settings", "setup"].includes(v)) v = state.txns.length || state.ai ? "ledger" : "setup";
+  if (!["ledger", "import", "settings"].includes(v)) v = state.txns.length || state.pending.length ? "ledger" : "import";
   document.querySelectorAll(".view").forEach((s) => { s.hidden = s.id !== `view-${v}`; });
-  document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === v || (v === "setup" && a.dataset.tab === "settings")));
-  if (v === "setup") {
-    state.wizard.provider = state.wizard.provider || state.ai?.provider || null;
-    state.wizard.models = null;
-    renderWiz1(); wizStep(1);
-  }
-  if (v === "import") $("needAi").hidden = !!state.ai;
+  document.querySelectorAll(".tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === v));
   closePicker();
 }
 
 // ---------- Wiring ----------
 
 function renderAll() {
-  renderAiChip(); renderFilters(); renderLedger(); renderQueue(); renderReview(); renderSettings(); route();
+  renderPrompt(); renderFilters(); renderLedger(); renderQueue(); renderReview(); renderSettings(); route();
 }
 
 function wire() {
   addEventListener("hashchange", route);
-  $("aiChip").addEventListener("click", () => { location.hash = state.ai ? "#settings" : "#setup"; });
 
   // Ledger controls
   $("q").addEventListener("input", (e) => { state.filter.q = e.target.value; renderLedger(); });
@@ -980,18 +790,13 @@ function wire() {
   } catch { /* storage may be off */ }
 
   // Import
-  $("fileInput").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
+  $("promptBox").addEventListener("click", copyPrompt);
+  $("fileInput").addEventListener("change", (e) => { importFiles([...e.target.files]); e.target.value = ""; });
   const drop = $("drop");
   ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", (e) => addFiles([...(e.dataTransfer?.files || [])]));
-  addEventListener("paste", (e) => {
-    if (location.hash !== "#import") return;
-    const files = [...(e.clipboardData?.files || [])];
-    if (files.length) { addFiles(files); e.preventDefault(); }
-  });
-  $("runBtn").addEventListener("click", runQueue);
-  $("clearQueue").addEventListener("click", () => { state.queue = []; renderQueue(); });
+  drop.addEventListener("drop", (e) => importFiles([...(e.dataTransfer?.files || [])]));
+  $("pasteBtn").addEventListener("click", importPasted);
   $("selAll").addEventListener("click", () => { state.pending.forEach((t) => { if (!t.invalid) t.include = true; }); savePending(); renderReview(); });
   $("selNone").addEventListener("click", () => { state.pending.forEach((t) => { t.include = false; }); savePending(); renderReview(); });
   $("commitBtn").addEventListener("click", commitPending);
@@ -1009,19 +814,6 @@ function wire() {
   $("exportJson").addEventListener("click", exportJson);
   $("importJson").addEventListener("change", (e) => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ""; });
   $("wipe").addEventListener("click", wipe);
-
-  // Wizard
-  $("wiz1Next").addEventListener("click", () => wizStep(2));
-  $("wiz2Next").addEventListener("click", () => wizStep(3));
-  document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => wizStep(+b.dataset.back)));
-  $("toggleKey").addEventListener("click", () => {
-    const i = $("apiKey");
-    i.type = i.type === "password" ? "text" : "password";
-    $("toggleKey").textContent = i.type === "password" ? "Show" : "Hide";
-  });
-  $("apiKey").addEventListener("input", () => { state.wizard.models = null; $("saveAi").disabled = true; $("modelField").hidden = true; });
-  $("testBtn").addEventListener("click", testKey);
-  $("saveAi").addEventListener("click", saveAi);
 
   setupPicker();
   addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("picker").hidden) closePicker(); });

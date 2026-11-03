@@ -20,9 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -31,7 +29,8 @@ import java.util.Map;
  *
  * The files are served from https://appassets.androidplatform.net/www/ (Android's reserved
  * host for app assets) instead of file://, so the page gets a real https origin: IndexedDB,
- * ES modules and CORS calls to the AI providers then work exactly as on the website.
+ * ES modules and the clipboard then work exactly as on the website. The page's CSP allows no
+ * outside hosts, so nothing leaves the phone.
  */
 public class MainActivity extends Activity {
 
@@ -98,7 +97,7 @@ public class MainActivity extends Activity {
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             Uri url = request.getUrl();
             if (!HOST.equals(url.getHost())) {
-                return null; // AI provider calls go to the network as normal
+                return null; // anything else: the page's CSP already blocks outside hosts
             }
             String path = url.getPath() == null ? "" : url.getPath();
             if (path.startsWith("/")) {
@@ -166,10 +165,8 @@ public class MainActivity extends Activity {
             Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
             pick.addCategory(Intent.CATEGORY_OPENABLE);
             pick.setType("*/*");
-            String[] mimes = acceptedMimeTypes(params.getAcceptTypes());
-            if (mimes.length > 0) {
-                pick.putExtra(Intent.EXTRA_MIME_TYPES, mimes);
-            }
+            // No MIME filter: phones label .xlsx and .csv files inconsistently (often octet-stream),
+            // so filtering would hide them. The page checks each file itself.
             if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
                 pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
             }
@@ -182,23 +179,6 @@ public class MainActivity extends Activity {
             }
             return true;
         }
-    }
-
-    /** "image/*,application/pdf" -> ["image/*", "application/pdf"]. JSON backups aren't filtered: phones often label them octet-stream. */
-    private static String[] acceptedMimeTypes(String[] accept) {
-        List<String> out = new ArrayList<>();
-        if (accept != null) {
-            for (String group : accept) {
-                if (group == null) continue;
-                for (String t : group.split(",")) {
-                    String m = t.trim();
-                    if (m.contains("/") && !m.equals("application/json")) {
-                        out.add(m);
-                    }
-                }
-            }
-        }
-        return out.toArray(new String[0]);
     }
 
     @Override

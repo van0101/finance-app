@@ -3,10 +3,10 @@
 Finance is a static web page plus an Android WebView wrapper. There's no backend and no login.
 
 ## Where data goes
-- Transactions, labels and the API key are stored on the device only (IndexedDB). Android backup is off.
-- Files you import are sent only to the AI provider you connected (api.anthropic.com, api.openai.com or
-  generativelanguage.googleapis.com), using your own key. The CSP blocks every other host.
-- On Gemini's free tier, Google may use inputs to improve its products. The setup screen says so.
+- Transactions and labels are stored on the device only (IndexedDB). Android backup is off.
+- The app makes no network calls: the CSP allows only the app's own files (`connect-src 'self'`).
+- Imported spreadsheets are read on the device. The statements themselves go only to whichever AI chat you
+  choose to paste them into, outside this app, under that service's own terms.
 
 ## Checks in this repo
 | Check | What it catches | Where to see results |
@@ -17,16 +17,17 @@ Finance is a static web page plus an Android WebView wrapper. There's no backend
 | Dependabot (`.github/dependabot.yml`) | Outdated GitHub Actions | Pull requests |
 
 ## Hardening in the app
-- Content Security Policy (meta tag): scripts and styles only from this site, network only to the three AI hosts, no plugins, no form posts.
+- Content Security Policy (meta tag): scripts, styles and network only to this site, no plugins, no form posts.
 - `referrer` set to `no-referrer`.
-- No `eval`, and no AI or user text is written into the page as HTML.
+- No `eval`, and no imported or user text is written into the page as HTML.
+- The .xlsx reader caps unzipped size (60 MB) and only unpacks the workbook, sheet and shared-string parts.
 - CSV export escapes cells that start with `=`, `+`, `-` or `@` so spreadsheets don't run them as formulas.
 - Android: no file:// access, external links open in the browser, only the app's own asset host is served inside the WebView.
 
 ## Android permissions
 | Permission | Why |
 |---|---|
-| `INTERNET` | Calls to the AI provider you connected |
+| `INTERNET` | WebView needs it to load the app's own `https://appassets.androidplatform.net` page. The CSP blocks all outside hosts. |
 
 The APK is signed with a key stored only in GitHub Actions secrets.
 

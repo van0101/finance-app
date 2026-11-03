@@ -1,13 +1,13 @@
 // Cache name carries the app version. Keep in sync with APP_VERSION in app.js
 // and CHANGELOG.md (CI checks it). A new name makes phones download the new release.
-const VERSION = "finance-v0.1.0";
+const VERSION = "finance-v0.2.0";
 const SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./db.js",
-  "./llm.js",
+  "./import.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -27,7 +27,7 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// Only this site's own files are cached. Calls to the AI providers always go to the network.
+// Only this site's own files are cached.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);

@@ -19,7 +19,7 @@ if [[ "$app" != "$sw" || "$app" != "$html" || "$app" != "$log" ]]; then
 fi
 
 if git rev-parse -q --verify HEAD~1 >/dev/null; then
-  changed=$(git diff --name-only HEAD~1 HEAD -- index.html app.js db.js llm.js styles.css sw.js manifest.webmanifest icons android)
+  changed=$(git diff --name-only HEAD~1 HEAD -- index.html app.js db.js import.js styles.css sw.js manifest.webmanifest icons android)
   if [[ -n "$changed" ]]; then
     prev=$(git show HEAD~1:app.js 2>/dev/null | app_version || true)
     echo "App files changed: $(echo "$changed" | tr '\n' ' ')"
