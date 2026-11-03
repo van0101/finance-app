@@ -67,7 +67,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
         if: steps.apk.outputs.missing == 'true' && env.HAS_SIGNING_KEY == 'true'
         with:
           gradle-version: "8.14.3"
