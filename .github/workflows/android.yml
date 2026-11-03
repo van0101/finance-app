@@ -36,7 +36,7 @@ jobs:
           # Put the key error lines into one annotation so they're visible on the run summary.
           msg=$(grep -E "error:|What went wrong|Could not|Exception:|FAILED|> " build.log | grep -v "^> Task" | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Android build failed::${msg}"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: finance-apk
