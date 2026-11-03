@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="paper">#F6F4EF</color>
+    <color name="night">#121417</color>
+    <color name="accent">#1F6F5C</color>
+    <color name="sheet">#F6F4EF</color>
+    <color name="line">#787C80</color>
+    <color name="tag">#4FD18B</color>
+</resources>

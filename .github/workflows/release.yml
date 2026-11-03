@@ -1,0 +1,116 @@
+# When a new version lands on main:
+#  1. tag it (vX.Y.Z) and publish a GitHub Release with that version's CHANGELOG section,
+#  2. build the signed Android APK and attach it to the release as finance.apk.
+# Re-run it from the Actions tab to attach the APK to a release that doesn't have one yet.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create tags, releases and upload the APK
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAS_SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read version
+        id: v
+        run: |
+          v=$(grep -oE 'APP_VERSION = "[0-9]+\.[0-9]+\.[0-9]+"' app.js | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+          echo "App version: $v"
+
+      - name: Tag and publish the release
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already released."
+            exit 0
+          fi
+          awk -v v="$VERSION" 'index($0, "## [" v "]")==1 {f=1; next} f && /^## \[|^\[/ {exit} f' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "::error::No CHANGELOG.md section for $VERSION"; exit 1; fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
+
+      - name: Check for an APK on the release
+        id: apk
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx finance.apk; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            if [ "$HAS_SIGNING_KEY" != "true" ]; then
+              echo "::warning title=No APK attached::Add the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets, then re-run this workflow."
+            fi
+          fi
+
+      - uses: actions/setup-java@v5
+        if: steps.apk.outputs.missing == 'true' && env.HAS_SIGNING_KEY == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v5
+        if: steps.apk.outputs.missing == 'true' && env.HAS_SIGNING_KEY == 'true'
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build signed APK and attach it
+        if: steps.apk.outputs.missing == 'true' && env.HAS_SIGNING_KEY == 'true'
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -o pipefail
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/finance.jks"
+
+          # Pasted secrets often pick up spaces or line breaks. Strip them.
+          key_b64=$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')
+          ANDROID_KEYSTORE_PASSWORD=$(printf '%s' "$ANDROID_KEYSTORE_PASSWORD" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          export ANDROID_KEYSTORE_PASSWORD
+
+          if ! printf '%s' "$key_b64" | base64 -d > "$ANDROID_KEYSTORE_FILE" 2>/dev/null; then
+            echo "::error title=ANDROID_KEYSTORE_BASE64 is not valid::It isn't valid base64 (${#key_b64} characters). Re-paste the whole value from ANDROID_KEYSTORE_BASE64.txt."
+            exit 1
+          fi
+          size=$(stat -c%s "$ANDROID_KEYSTORE_FILE")
+          echo "Keystore secret: ${#key_b64} base64 characters, $size bytes"
+          if ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias finance >/dev/null 2>&1; then
+            if ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null 2>&1 && [ "$size" -lt 3000 ]; then
+              echo "::error title=ANDROID_KEYSTORE_BASE64 looks incomplete::It decoded to only $size bytes from ${#key_b64} characters. Re-paste all of it."
+            else
+              echo "::error title=Signing key and password don't match::The password in ANDROID_KEYSTORE_PASSWORD doesn't open the key in ANDROID_KEYSTORE_BASE64 (${#key_b64} characters). Re-paste the password from ANDROID_KEYSTORE_PASSWORD.txt, and the key too if that doesn't fix it."
+            fi
+            rm -f "$ANDROID_KEYSTORE_FILE"
+            exit 1
+          fi
+
+          gradle -p android assembleRelease --console=plain 2>&1 | tee build.log
+          rm -f "$ANDROID_KEYSTORE_FILE"
+          cp android/app/build/outputs/apk/release/app-release.apk finance.apk
+          gh release upload "$TAG" finance.apk --clobber
+
+      - name: Show build errors
+        if: failure()
+        run: |
+          [ -f build.log ] || exit 0
+          msg=$(grep -E "error:|What went wrong|Could not|Exception:|FAILED|> " build.log | grep -v "^> Task" | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Android build failed::${msg}"

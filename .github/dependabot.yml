@@ -1,0 +1,7 @@
+# Opens a PR when an action used in the workflows has a new (possibly security) release.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

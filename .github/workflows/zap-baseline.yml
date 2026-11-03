@@ -1,0 +1,34 @@
+# Dynamic scan: runs OWASP ZAP against the live site, the way an attacker's
+# scanner would (missing security headers, cookie flags, info leaks).
+# Passive only: it does not attack the site.
+# Results: Actions run > Summary > Artifacts > zap-report (HTML report).
+name: ZAP baseline scan
+
+on:
+  workflow_run:
+    workflows: ["pages-build-deployment"] # GitHub's own Pages deploy
+    types: [completed]
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: ZAP baseline
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: "https://van0101.github.io/finance-app/"
+          rules_file_name: ".zap/rules.tsv"
+          cmd_options: "-a"
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-report

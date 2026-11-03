@@ -1,0 +1,4 @@
+10020	IGNORE	(Missing anti-clickjacking header: GitHub Pages cannot send X-Frame-Options; static page has no actions worth clickjacking)
+10021	IGNORE	(X-Content-Type-Options: set by GitHub Pages already; ZAP sometimes flags cached responses)
+10038	WARN	(CSP header not set: CSP is delivered via meta tag because GitHub Pages cannot set custom headers)
+10049	IGNORE	(Non-storable / cacheable content: informational)

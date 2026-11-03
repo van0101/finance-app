@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Finance</title>
+<meta name="description" content="Transaction tracker: an AI of your choice reads your statements and screenshots, you label each transaction.">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Finance">
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"></span>Finance</div>
+  <button class="ai-chip" id="aiChip" type="button" aria-label="AI connection">Connect AI</button>
+</header>
+
+<main id="main">
+  <!-- Ledger -->
+  <section id="view-ledger" class="view" hidden>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Search name, merchant, label" autocomplete="off" aria-label="Search">
+      <select id="fMonth" aria-label="Month"></select>
+      <select id="fLabel" aria-label="Label"></select>
+      <div class="seg" role="group" aria-label="View">
+        <button type="button" data-mode="list" class="on">List</button>
+        <button type="button" data-mode="group">Grouped</button>
+      </div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="bars" id="bars"></div>
+    <div id="ledgerRows" class="rows"></div>
+    <div class="empty" id="ledgerEmpty" hidden>
+      <p class="empty-title">No transactions yet</p>
+      <p>Add a statement PDF or a screenshot and your AI will list the transactions for you to label.</p>
+      <a class="btn primary" href="#import">Import a statement</a>
+    </div>
+  </section>
+
+  <!-- Import -->
+  <section id="view-import" class="view" hidden>
+    <div class="notice" id="needAi" hidden>
+      <p>Connect an AI first. It reads your files and lists the transactions.</p>
+      <a class="btn primary" href="#setup">Connect AI</a>
+    </div>
+    <label class="drop" id="drop">
+      <input id="fileInput" type="file" accept="image/*,application/pdf" multiple>
+      <span class="drop-title">Add statements or screenshots</span>
+      <span class="drop-sub">PDF, PNG, JPG or WebP. Pick several at once, or paste a screenshot.</span>
+    </label>
+    <ul class="queue" id="queue"></ul>
+    <div class="actions" id="queueActions" hidden>
+      <button class="btn primary" id="runBtn" type="button">Read transactions</button>
+      <button class="btn ghost" id="clearQueue" type="button">Clear</button>
+    </div>
+
+    <div id="review" hidden>
+      <h2 class="h">Review</h2>
+      <p class="sub">Nothing is saved until you tap <b>Add to ledger</b>. Labels are the AI's guess: tap one to change it.</p>
+      <div id="docCards" class="doc-cards"></div>
+      <div class="toolbar slim">
+        <button class="btn small ghost" id="selAll" type="button">Select all</button>
+        <button class="btn small ghost" id="selNone" type="button">Select none</button>
+        <div class="seg" role="group" aria-label="View">
+          <button type="button" data-rmode="list" class="on">List</button>
+          <button type="button" data-rmode="group">Grouped</button>
+        </div>
+      </div>
+      <div id="reviewRows" class="rows"></div>
+      <div class="sticky-actions">
+        <button class="btn primary" id="commitBtn" type="button">Add to ledger</button>
+        <button class="btn ghost" id="discardBtn" type="button">Discard</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="view-settings" class="view" hidden>
+    <h2 class="h">AI connection</h2>
+    <div class="card" id="aiCard"></div>
+
+    <h2 class="h">Labels</h2>
+    <p class="sub">Shown in the label dropdown. Renaming a label renames it on every transaction that uses it.</p>
+    <div class="card">
+      <form class="inline" id="addLabelForm">
+        <input id="newLabel" type="text" placeholder="New label, e.g. Uber cab" maxlength="40" autocomplete="off" aria-label="New label">
+        <button class="btn small" type="submit">Add</button>
+      </form>
+      <ul class="label-list" id="labelList"></ul>
+    </div>
+
+    <h2 class="h">Learned from you</h2>
+    <p class="sub">When you label a merchant, new imports from that merchant get the same label. Existing records never change on their own.</p>
+    <div class="card"><ul class="memory-list" id="memoryList"></ul></div>
+
+    <h2 class="h">Your data</h2>
+    <p class="sub">Everything stays on this device. Export a backup before clearing your browser or switching phones.</p>
+    <div class="card btn-row">
+      <button class="btn small" id="exportCsv" type="button">Export CSV</button>
+      <button class="btn small" id="exportJson" type="button">Export backup</button>
+      <label class="btn small">Restore backup<input id="importJson" type="file" accept="application/json" hidden></label>
+      <button class="btn small danger" id="wipe" type="button">Delete all data</button>
+    </div>
+  </section>
+
+  <!-- Setup wizard -->
+  <section id="view-setup" class="view" hidden>
+    <ol class="steps" id="steps">
+      <li data-step="1">Pick AI</li><li data-step="2">Get key</li><li data-step="3">Connect</li>
+    </ol>
+
+    <div class="wiz" data-wiz="1">
+      <h2 class="h">Which AI should read your statements?</h2>
+      <p class="sub">You can connect one at a time and switch later.</p>
+      <div class="providers" id="providerCards"></div>
+      <div class="actions"><button class="btn primary" id="wiz1Next" type="button" disabled>Next</button></div>
+    </div>
+
+    <div class="wiz" data-wiz="2" hidden>
+      <h2 class="h" id="wiz2Title">Get an API key</h2>
+      <ol class="howto" id="howto"></ol>
+      <div class="notice warn" id="providerNote"></div>
+      <div class="actions">
+        <button class="btn ghost" data-back="1" type="button">Back</button>
+        <button class="btn primary" id="wiz2Next" type="button">I have a key</button>
+      </div>
+    </div>
+
+    <div class="wiz" data-wiz="3" hidden>
+      <h2 class="h" id="wiz3Title">Paste your key</h2>
+      <div class="field">
+        <label for="apiKey">API key</label>
+        <div class="key-row">
+          <input id="apiKey" type="password" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn small ghost" id="toggleKey" type="button">Show</button>
+        </div>
+        <p class="hint" id="keyHint"></p>
+      </div>
+      <button class="btn" id="testBtn" type="button">Test connection</button>
+      <p class="status" id="testStatus" role="status"></p>
+      <div class="field" id="modelField" hidden>
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect"></select>
+        <p class="hint">Preselected: a good balance of accuracy and cost for reading statements.</p>
+      </div>
+      <p class="hint">Your key is saved only on this device and is sent only to the provider you picked.</p>
+      <div class="actions">
+        <button class="btn ghost" data-back="2" type="button">Back</button>
+        <button class="btn primary" id="saveAi" type="button" disabled>Save and continue</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="Sections">
+  <a href="#ledger" data-tab="ledger">Transactions</a>
+  <a href="#import" data-tab="import">Import <span class="badge" id="pendingBadge" hidden></span></a>
+  <a href="#settings" data-tab="settings">Settings</a>
+</nav>
+
+<footer class="foot"><a href="https://github.com/van0101/finance-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener" id="ver">v0.1.0</a></footer>
+
+<!-- Label picker, reused by every label cell -->
+<div class="picker" id="picker" hidden role="dialog" aria-label="Choose label">
+  <input id="pickerInput" type="text" placeholder="Search or add a label" autocomplete="off" maxlength="40" aria-label="Label">
+  <ul id="pickerList" role="listbox"></ul>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+
+<dialog id="confirm">
+  <p id="confirmText"></p>
+  <div class="actions">
+    <button class="btn ghost" value="cancel" id="confirmNo" type="button">Cancel</button>
+    <button class="btn primary" value="ok" id="confirmYes" type="button">OK</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" hidden role="status"><span id="toastText"></span><button type="button" id="toastAction" hidden></button></div>
+</body>
+</html>

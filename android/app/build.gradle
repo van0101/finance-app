@@ -1,0 +1,103 @@
+import javax.inject.Inject
+
+plugins {
+    id 'com.android.application'
+}
+
+// One version for web and Android: read APP_VERSION from the web app's app.js.
+def appJs = rootProject.file('../app.js').text
+def match = (appJs =~ /APP_VERSION = "(\d+)\.(\d+)\.(\d+)"/)
+if (!match.find()) {
+    throw new GradleException('APP_VERSION not found in app.js')
+}
+def vMajor = match.group(1) as int
+def vMinor = match.group(2) as int
+def vPatch = match.group(3) as int
+
+// Release signing comes from CI secrets. Without them the APK is signed with the debug key.
+def keystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
+
+android {
+    namespace 'com.van0101.finance'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.van0101.finance'
+        minSdk 26
+        targetSdk 35
+        versionCode vMajor * 10000 + vMinor * 100 + vPatch
+        versionName "${vMajor}.${vMinor}.${vPatch}"
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias 'finance'
+                keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+// The app is the web app from the repo root, bundled into the APK as assets/www/.
+// Copied at build time, so the web files stay the single source.
+abstract class CopyWebTask extends DefaultTask {
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getWebFiles()
+
+    @Internal
+    abstract DirectoryProperty getWebRoot()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    @Inject
+    abstract FileSystemOperations getFs()
+
+    @TaskAction
+    void copyWeb() {
+        def root = webRoot.get().asFile
+        def out = outputDir.get().dir('www').asFile
+        fs.sync { spec ->
+            spec.from(root) { inner ->
+                inner.include('index.html', '*.js', '*.css', 'manifest.webmanifest', 'icons/**')
+                inner.exclude('sw.js')
+            }
+            spec.into(out)
+        }
+    }
+}
+
+def copyWeb = tasks.register('copyWeb', CopyWebTask) {
+    webRoot.set(rootProject.file('..'))
+    webFiles.from(fileTree(rootProject.file('..')) {
+        include 'index.html', '*.js', '*.css', 'manifest.webmanifest', 'icons/**'
+        exclude 'sw.js'
+    })
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets.addGeneratedSourceDirectory(copyWeb, { it.outputDir })
+    }
+}

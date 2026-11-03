@@ -1,0 +1,44 @@
+# Compiles the Android app on every change, so build errors show up before a release.
+name: Android build
+
+on:
+  push:
+    paths: ["android/**", "*.js", "*.html", "*.css", "icons/**", ".github/workflows/android.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["android/**", "*.js", "*.html", "*.css", "icons/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.14.3"
+      - name: Build APK
+        run: |
+          set -o pipefail
+          gradle -p android assembleRelease --console=plain --stacktrace 2>&1 | tee build.log
+      - name: Show build errors
+        if: failure()
+        run: |
+          # Put the key error lines into one annotation so they're visible on the run summary.
+          msg=$(grep -E "error:|What went wrong|Could not|Exception:|FAILED|> " build.log | grep -v "^> Task" | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Android build failed::${msg}"
+      - uses: actions/upload-artifact@v6
+        if: success()
+        with:
+          name: finance-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 7
